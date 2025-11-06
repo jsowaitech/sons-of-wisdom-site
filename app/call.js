@@ -1,474 +1,461 @@
 // app/call.js
-import { supabase, ensureLoggedIn } from "./supabase.js";
 import { CONFIG } from "./config.js";
+import { supabase, ensureLoggedIn } from "./supabase.js"; // named imports
 
-/* -------------------------
-   Grabs
--------------------------- */
-const ui = {
-  ring: document.getElementById("ring"),
-  status: document.getElementById("status"),
-  clock: document.getElementById("clock"),
-  listenBar: document.getElementById("listenBar"),
+const app = document.getElementById("app");
 
-  btnBack: document.getElementById("btnBack"),
-  btnMic: document.getElementById("btnMic"),
-  btnEnd: document.getElementById("btnEnd"),
-  btnSpk: document.getElementById("btnSpk"),
-  btnMore: document.getElementById("btnMore"),
+// ----- UI -----
+app.innerHTML = `
+  <button id="backBtn" class="btn btn-ghost back-btn">← Back</button>
 
-  tts: document.getElementById("tts-audio"), // hidden <audio> for AI output
-};
+  <section class="call-stage" id="stage">
+    <div class="avatar-wrap">
+      <div class="ring" id="ring"></div>
+      <img class="avatar" src="${CONFIG.AVATAR_URL || './Sonofwisdom.png'}" alt="Avatar"/>
+    </div>
 
-const state = {
-  active: false,
-  speaking: false,
-  muted: false,
-  speakerOn: true,
+    <div class="status-row">
+      <span class="pill" id="statusPill">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">Tap the blue call button to begin.</span>
+      </span>
+    </div>
 
-  callId: null,
-  clockStart: 0,
-  clockTick: 0,
+    <div class="timer" id="timer">00:00</div>
 
-  // mic
-  micStream: null,
-  ac: null,
-  micSource: null,
-  micAnalyser: null,
-  micRecorder: null,
-  micChunks: [],
+    <div class="listen-bar" id="listenBar" aria-live="polite">Listening bar…</div>
 
-  // VAD thresholds
-  vadThresholdDb: -45,      // start level (dBFS) ~ -45
-  minSpeechMs: 160,         // must exceed threshold for this long to start
-  minSilenceMs: 600,        // consider ended after this much silence
-  lastAbove: 0,
-  lastBelow: 0,
+    <div class="controls">
+      <button id="micBtn" class="btn btn-icon" title="Mic on/off">
+        <span class="i i-mic"></span>
+      </button>
+      <button id="hangBtn" class="btn btn-danger" title="End Voice Chat">
+        <span class="i i-phone"></span>
+        <span class="label">End Voice Chat</span>
+      </button>
+      <button id="spkBtn" class="btn btn-icon" title="Speaker on/off">
+        <span class="i i-spk"></span>
+      </button>
+      <button id="moreBtn" class="btn btn-icon" title="More">
+        <span class="i i-more"></span>
+      </button>
+    </div>
+  </section>
 
-  // ring sync
-  outAC: null,
-  outAnalyser: null,
+  <audio id="ringAudio" preload="auto" src="./ring.mp3"></audio>
+  <audio id="greetAudio" preload="auto" src="./blake.mp3"></audio>
+  <audio id="ttsAudio" preload="auto" style="display:none"></audio>
+`;
 
-  // speech recognition (for transcript → n8n)
-  recog: null,
-  recogEnabled: true,
+// ----- Elements -----
+const backBtn   = document.getElementById("backBtn");
+const ringEl    = document.getElementById("ring");
+const pillEl    = document.getElementById("statusPill");
+const dotEl     = document.getElementById("statusDot");
+const textEl    = document.getElementById("statusText");
+const timerEl   = document.getElementById("timer");
+const barEl     = document.getElementById("listenBar");
 
-  // uploads
-  bucket: CONFIG.AUDIO_BUCKET || "audio",
-};
+const micBtn    = document.getElementById("micBtn");
+const hangBtn   = document.getElementById("hangBtn");
+const spkBtn    = document.getElementById("spkBtn");
+const moreBtn   = document.getElementById("moreBtn");
 
-/* -------------------------
-   Utilities
--------------------------- */
-function setStatus(text) {
-  if (ui.status) ui.status.textContent = text || "";
-}
-function setListening(text) {
-  if (ui.listenBar) ui.listenBar.textContent = text || "";
-}
-function setClock(ms) {
-  if (!ui.clock) return;
-  const s = Math.floor(ms / 1000);
-  const mm = String(Math.floor(s / 60)).padStart(2, "0");
-  const ss = String(s % 60).padStart(2, "0");
-  ui.clock.textContent = `${mm}:${ss}`;
-}
-function startClock() {
-  state.clockStart = performance.now();
-  stopClock();
-  state.clockTick = setInterval(() => {
-    setClock(performance.now() - state.clockStart);
-  }, 250);
-}
-function stopClock() {
-  if (state.clockTick) clearInterval(state.clockTick);
-  state.clockTick = 0;
-}
+const ringAudio   = document.getElementById("ringAudio");
+const greetAudio  = document.getElementById("greetAudio");
+const ttsAudio    = document.getElementById("ttsAudio");
 
-/* RMS helpers */
-function rmsFromAnalyser(analyser) {
-  const buf = new Float32Array(analyser.fftSize);
-  analyser.getFloatTimeDomainData(buf);
-  let sum = 0;
-  for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
-  const rms = Math.sqrt(sum / buf.length) || 0;
-  const db = 20 * Math.log10(rms || 1e-8);
-  return { rms, db };
-}
+// ----- State -----
+let callId = null;
+let user = null;
 
-/* -------------------------
-   Boot + Flow
--------------------------- */
-async function boot() {
-  await ensureLoggedIn({ redirectTo: "./auth.html" });
+let ac;                // AudioContext
+let inputStream;       // MediaStream (mic)
+let mediaRec;          // MediaRecorder (for archival upload)
+let recChunks = [];
 
-  /* Call id: keep stable while on this page */
-  const param = new URL(location.href).searchParams;
-  const prompt = param.get("prompt") || "";
-  state.callId =
-    param.get("call_id") ||
-    crypto.randomUUID().toString();
-  localStorage.setItem("last_call_id", state.callId);
+let stt;               // Web Speech API recognizer
+let sttActive = false;
 
-  /* UI */
-  wireUI();
+let vadNode;           // ScriptProcessorNode (simple VAD)
+let vadOn = false;
+let speaking = false;
+let ttsPlaying = false;
 
-  /* Allow user to hang up *before* we start anything */
-  ui.btnEnd?.classList.add("armed");
+let timerInt;
+let seconds = 0;
 
-  /* Begin */
-  await startCall(prompt).catch((err) => {
-    console.error("[CALL] failed to start", err);
-    setStatus("Call failed to start");
-  });
+let abortSequence = false; // to stop ring/greeting immediately
+let uploadingAllowed = true; // if bucket not found, we stop trying
+
+// ----- Helpers -----
+const sleep = (ms)=> new Promise(r=>setTimeout(r,ms));
+const mmss = (s)=> `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+
+function setStatus(kind, text) {
+  // kind: 'idle' | 'connecting' | 'greeting' | 'listening' | 'speaking' | 'ended' | 'error'
+  textEl.textContent = text;
+  pillEl.dataset.kind = kind;
+  if (kind === 'speaking') ringEl.dataset.state = 'speaking';
+  else if (kind === 'listening') ringEl.dataset.state = 'listening';
+  else ringEl.dataset.state = 'idle';
 }
 
-function wireUI() {
-  ui.btnBack?.addEventListener("click", () => {
-    navigateHome();
-  });
-
-  ui.btnEnd?.addEventListener("click", () => {
-    endCall("User ended");
-  });
-
-  ui.btnSpk?.addEventListener("click", () => {
-    state.speakerOn = !state.speakerOn;
-    if (ui.btnSpk) ui.btnSpk.dataset.on = String(state.speakerOn);
-    ui.tts.muted = !state.speakerOn;
-  });
-
-  ui.btnMic?.addEventListener("click", () => {
-    state.muted = !state.muted;
-    if (ui.btnMic) ui.btnMic.dataset.muted = String(state.muted);
-    setStatus(state.muted ? "Mic muted" : "Listening…");
-  });
+function startTimer() {
+  clearInterval(timerInt);
+  seconds = 0;
+  timerEl.textContent = "00:00";
+  timerInt = setInterval(()=> {
+    seconds += 1;
+    timerEl.textContent = mmss(seconds);
+  }, 1000);
 }
 
-async function startCall(promptText) {
-  setStatus("Connecting…");
-  setClock(0);
-  startClock();
-  state.active = true;
-
-  // Play ring twice, but remain cancellable
-  await playAsset("./ring.mp3", 2, 1600);
-  if (!state.active) return;
-
-  // Greeting
-  setStatus("AI is greeting you…");
-  await playAsset("./blake.mp3", 1);
-  if (!state.active) return;
-
-  // Start mic VAD + recognition + ring sync
-  await startMic();
-  await startRecognition();       // transcripts → n8n
-  await startRingSync();          // ring reacts to output audio amplitude
-
-  if (promptText) {
-    // seed message to n8n if you came from a chip
-    sendTranscriptToN8n(promptText).catch(console.warn);
-  }
-
-  setStatus("Listening…");
-  setListening("Listening bar…");
+function stopTimer() {
+  clearInterval(timerInt);
 }
 
-/* -------------------------
-   Media helpers
--------------------------- */
-async function playAsset(url, loops = 1, gapMs = 0) {
-  // Make sure the end button can stop this
-  for (let i = 0; i < loops; i++) {
-    if (!state.active) break;
-    await playOnce(url);
-    if (gapMs && i < loops - 1) await wait(gapMs);
-  }
+function safeStopAudio(a) {
+  try { a.pause(); a.currentTime = 0; } catch {}
 }
 
-function wait(ms) {
-  return new Promise((res) => setTimeout(res, ms));
+function nowTs() {
+  return new Date().toISOString();
 }
 
-function playOnce(url) {
-  return new Promise((resolve) => {
-    const a = new Audio(url);
-    a.preload = "auto";
-    a.onended = () => resolve();
-    a.onerror = () => resolve();
-    a.play().catch(() => resolve());
-  });
+// ----- Auth -----
+await ensureLoggedIn();
+const { data: { user: u }} = await supabase.auth.getUser();
+user = u;
+
+// Create a call row (best-effort)
+async function ensureCallRow() {
+  if (callId) return callId;
+  const ins = await supabase.from("calls")
+    .insert([{ started_at: nowTs(), user_id: user?.id || null }])
+    .select("id").single();
+  if (!ins.error) callId = ins.data.id;
+  return callId;
 }
 
-/* -------------------------
-   VAD + Recording (mic)
--------------------------- */
-async function startMic() {
-  // mic stream
-  state.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-  // recorder
-  state.micRecorder = new MediaRecorder(state.micStream, { mimeType: "audio/webm;codecs=opus" });
-  state.micChunks = [];
-  state.micRecorder.ondataavailable = (e) => e.data && state.micChunks.push(e.data);
-  state.micRecorder.onstop = onSegmentStop;
-
-  // WebAudio for VAD
-  state.ac = new (window.AudioContext || window.webkitAudioContext)();
-  state.micSource = state.ac.createMediaStreamSource(state.micStream);
-  state.micAnalyser = state.ac.createAnalyser();
-  state.micAnalyser.fftSize = 1024;
-  state.micSource.connect(state.micAnalyser);
-
-  // loop
-  state.lastAbove = 0;
-  state.lastBelow = performance.now();
-  vadLoop();
-}
-
-function vadLoop() {
-  if (!state.active || !state.micAnalyser) return;
-
-  const { db } = rmsFromAnalyser(state.micAnalyser);
-  const now = performance.now();
-
-  // update visual ring for *input* too (very subtle)
-  const scale = Math.max(1, 1 + Math.max(0, (db + 50) / 35) * 0.25);
-  ui.ring?.style.setProperty("--ring-scale", String(scale));
-
-  if (state.muted) {
-    requestAnimationFrame(vadLoop);
-    return;
-  }
-
-  if (db > state.vadThresholdDb) {
-    state.lastAbove = now;
-    // started speaking?
-    if (!state.speaking && now - state.lastBelow >= state.minSpeechMs) {
-      startSegment();
-    }
-  } else {
-    state.lastBelow = now;
-    // ended speaking?
-    if (state.speaking && now - state.lastAbove >= state.minSilenceMs) {
-      stopSegment();
-    }
-  }
-
-  requestAnimationFrame(vadLoop);
-}
-
-function startSegment() {
-  state.speaking = true;
-  setListening("You’re speaking…");
-  state.micChunks = [];
-  try { state.micRecorder?.start(); } catch {}
-}
-
-function stopSegment() {
-  state.speaking = false;
-  setListening("Listening bar…");
-  try { state.micRecorder?.stop(); } catch {}
-}
-
-async function onSegmentStop() {
-  // Upload the recorded segment to Supabase (archive only)
-  if (!state.micChunks.length) return;
-  const blob = new Blob(state.micChunks, { type: "audio/webm" });
-  state.micChunks = [];
-
-  const fileName = `user-${Date.now()}.webm`;
+// Save audio blob to storage (best-effort)
+async function uploadAudioBlob(blob) {
+  if (!uploadingAllowed || !blob || blob.size === 0) return;
   try {
-    const { data, error } = await supabase.storage
-      .from(state.bucket)
-      .upload(`audio/${state.callId}/${fileName}`, blob, { upsert: true, contentType: "audio/webm" });
+    const cid = await ensureCallRow();
+    const path = `audio/${cid || "unknown"}/${Date.now()}.webm`;
+    const up = await supabase.storage.from("audio").upload(path, blob, {
+      contentType: "audio/webm",
+      upsert: false
+    });
+    if (up.error && /Bucket not found/i.test(up.error.message)) {
+      console.warn("[CALL] storage bucket 'audio' not found—skipping future uploads");
+      uploadingAllowed = false;
+    }
+  } catch (e) {
+    console.warn("[CALL] Upload error:", e);
+  }
+}
 
-    if (error) {
-      console.warn("[upload] storage error:", error.message);
+// ----- Audio / VAD / STT -----
+async function initAudio() {
+  if (ac) return;
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  inputStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+
+  // recorder for archival
+  mediaRec = new MediaRecorder(inputStream, { mimeType: "audio/webm" });
+  mediaRec.ondataavailable = (e)=> { if (e.data?.size) recChunks.push(e.data); };
+  mediaRec.onstop = ()=> {
+    const blob = new Blob(recChunks, { type: "audio/webm" });
+    recChunks = [];
+    uploadAudioBlob(blob);
+  };
+
+  // VAD node
+  const src = ac.createMediaStreamSource(inputStream);
+  vadNode = ac.createScriptProcessor(1024, 1, 1);
+
+  let frameCount = 0;
+  let energyAvg = 0;
+  let hang = 0;
+  const THRESH = 0.015;     // base threshold
+  const HANG_MAX = 12;      // frames after speech to keep "speaking"
+
+  vadNode.onaudioprocess = (ev) => {
+    const ch = ev.inputBuffer.getChannelData(0);
+    let sum = 0;
+    for (let i=0; i<ch.length; i++) {
+      const s = ch[i];
+      sum += s*s;
+    }
+    const rms = Math.sqrt(sum / ch.length);
+    // running avg
+    energyAvg = (energyAvg*0.95) + (rms*0.05);
+    const thresh = Math.max(THRESH, energyAvg*1.2);
+
+    const isSpeech = rms > thresh;
+    if (isSpeech) {
+      hang = HANG_MAX;
+      if (!speaking) {
+        speaking = true;
+        onSpeechStart();
+      }
+    } else {
+      if (hang > 0) hang--;
+      if (speaking && hang === 0) {
+        speaking = false;
+        onSpeechEnd();
+      }
+    }
+
+    // animate bar (0..1)
+    const norm = Math.min(1, rms / 0.08);
+    barEl.style.setProperty("--level", norm.toFixed(3));
+  };
+
+  src.connect(vadNode);
+  vadNode.connect(ac.destination);
+
+  vadOn = true;
+
+  // STT (Web Speech API if available)
+  if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
+    const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+    stt = new R();
+    stt.continuous = true;
+    stt.interimResults = true;
+    stt.lang = "en-US";
+    stt.onstart = ()=> { sttActive = true; };
+    stt.onerror = (e)=> console.warn("[STT] error:", e);
+    stt.onend = ()=> { sttActive = false; if (vadOn) try { stt.start(); } catch {} };
+    stt.onresult = (e)=> {
+      // When we get a final result, send to n8n
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        if (res.isFinal) {
+          const txt = res[0].transcript.trim();
+          if (txt) onFinalTranscript(txt);
+        }
+      }
+    };
+    try { stt.start(); } catch {}
+  } else {
+    console.warn("[STT] Web Speech API not available. Transcripts won't be generated.");
+  }
+}
+
+function onSpeechStart() {
+  // barge-in: stop TTS immediately
+  if (ttsPlaying) {
+    safeStopAudio(ttsAudio);
+    ttsPlaying = false;
+  }
+  setStatus("listening", "Listening…");
+}
+
+function onSpeechEnd() {
+  // If STT is present it will call onFinalTranscript via isFinal=true
+  // If not present, we do nothing (no transcript is available).
+}
+
+// Called by STT with final text
+async function onFinalTranscript(text) {
+  setStatus("connecting", "Sending transcript to n8n…");
+  console.log("[CALL] transcript sent to n8n:", text);
+
+  // Optional: store session turn in DB (best-effort)
+  try {
+    const cid = await ensureCallRow();
+    await supabase.from("call_sessions").insert([{
+      call_id: cid,
+      role: "user",
+      ai_text: null,
+      input_transcript: text,
+      created_at: nowTs()
+    }]);
+  } catch {}
+
+  // Send to n8n webhook (expects either JSON with {audio_url, transcript} or binary audio)
+  try {
+    const res = await fetch(CONFIG.N8N_WEBHOOK_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        call_id: callId,
+        user_id: user?.id || null,
+        text
+      })
+    });
+
+    let srcUrl = null;
+
+    // If JSON with a URL
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      const data = await res.json();
+      if (data?.audio_url) {
+        srcUrl = data.audio_url;
+      } else if (data?.audio_base64) {
+        const blob = b64ToBlob(data.audio_base64, "audio/mpeg");
+        srcUrl = URL.createObjectURL(blob);
+      }
+    } else {
+      // treat as audio binary
+      const blob = await res.blob();
+      srcUrl = URL.createObjectURL(blob);
+    }
+
+    if (!srcUrl) {
+      setStatus("listening", "Listening…");
       return;
     }
 
-    // (Optional) write a row referencing the audio segment
-    await supabase.from("call_sessions").insert({
-      call_id: state.callId,
-      role: "user",
-      input_transcript: null,   // the text will arrive via recognition
-      audio_url: data?.path || null,
-      created_at: new Date().toISOString(),
-    });
-  } catch (e) {
-    console.warn("[upload] failed:", e);
-  }
-}
+    await playTTS(srcUrl);
 
-/* -------------------------
-   Speech Recognition → n8n
--------------------------- */
-async function startRecognition() {
-  if (!state.recogEnabled) return;
-
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    console.info("[recog] Web Speech not supported — transcripts will not be sent automatically.");
-    return;
-  }
-
-  const r = new SR();
-  r.lang = "en-US";
-  r.continuous = true;
-  r.interimResults = false;
-
-  r.onstart = () => setStatus("Listening…");
-  r.onerror = (e) => console.warn("[recog] error:", e);
-  r.onend = () => {
-    if (state.active) {
-      // Auto-restart for continuous listening
-      try { r.start(); } catch {}
-    }
-  };
-  r.onresult = (e) => {
-    for (const res of e.results) {
-      if (res.isFinal) {
-        const transcript = res[0].transcript?.trim();
-        if (transcript) {
-          // Save “user” row with text
-          supabase.from("call_sessions").insert({
-            call_id: state.callId,
-            role: "user",
-            input_transcript: transcript,
-            created_at: new Date().toISOString(),
-          }).catch(() => {});
-
-          sendTranscriptToN8n(transcript).catch(console.warn);
-        }
-      }
-    }
-  };
-
-  state.recog = r;
-  try { r.start(); } catch {}
-}
-
-async function sendTranscriptToN8n(text) {
-  if (!CONFIG.N8N_WEBHOOK_URL) {
-    console.log("[CALL] transcript sent to n8n: (user spoke = STT not configured)", text);
-    return;
-  }
-
-  const payload = {
-    call_id: state.callId,
-    user_text: text,
-    // any other context you want
-  };
-
-  const res = await fetch(CONFIG.N8N_WEBHOOK_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-  // Response may be audio binary or JSON w/ url
-  const ctype = (res.headers.get("content-type") || "").toLowerCase();
-  if (ctype.includes("application/json")) {
-    const j = await res.json();
-    const url = j.audio_url || j.url || "";
-    const aiText = j.ai_text || j.text || "";
-    if (aiText) {
-      supabase.from("call_sessions").insert({
-        call_id: state.callId,
+    // store assistant turn
+    try {
+      const cid = await ensureCallRow();
+      await supabase.from("call_sessions").insert([{
+        call_id: cid,
         role: "assistant",
-        ai_text: aiText,
-        audio_url: url || null,
-        created_at: new Date().toISOString(),
-      }).catch(() => {});
-    }
-    if (url) {
-      await playTTS(url);
-    }
-  } else {
-    // assume audio
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    await playTTS(url);
-    // (Optional) store assistant row
-    supabase.from("call_sessions").insert({
-      call_id: state.callId,
-      role: "assistant",
-      ai_text: null,
-      audio_url: null,
-      created_at: new Date().toISOString(),
-    }).catch(() => {});
-  }
-}
+        ai_text: null,
+        input_transcript: null,
+        created_at: nowTs()
+      }]);
+    } catch {}
 
-function playTTS(src) {
-  return new Promise((resolve) => {
-    ui.tts.src = src;
-    ui.tts.onended = () => resolve();
-    ui.tts.onerror = () => resolve();
-    ui.tts.muted = !state.speakerOn;
-    ui.tts.play().catch(() => resolve());
-  });
-}
-
-/* -------------------------
-   Output ring sync (AI audio amplitude)
--------------------------- */
-async function startRingSync() {
-  try {
-    state.outAC = new (window.AudioContext || window.webkitAudioContext)();
-    const node = state.outAC.createMediaElementSource(ui.tts);
-    state.outAnalyser = state.outAC.createAnalyser();
-    state.outAnalyser.fftSize = 1024;
-    node.connect(state.outAnalyser);
-    state.outAnalyser.connect(state.outAC.destination);
-    ringLoop();
+    setStatus("listening", "Listening…");
   } catch (e) {
-    console.warn("[ringSync] cannot start:", e);
+    console.warn("[CALL] n8n error:", e);
+    setStatus("error", "Network error. Still listening…");
   }
 }
 
-function ringLoop() {
-  if (!state.active || !state.outAnalyser) return;
-  const { db } = rmsFromAnalyser(state.outAnalyser);
-  const scale = Math.max(1, 1 + Math.max(0, (db + 50) / 35) * 0.35);
-  ui.ring?.style.setProperty("--ring-scale", String(scale));
-  requestAnimationFrame(ringLoop);
+function b64ToBlob(b64, mime) {
+  const bin = atob(b64);
+  const len = bin.length;
+  const u8 = new Uint8Array(len);
+  for (let i=0; i<len; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: mime });
 }
 
-/* -------------------------
-   Teardown
--------------------------- */
-function hardStopMedia() {
-  try { ui.tts.pause(); ui.tts.src = ""; } catch {}
-  if (state.recog) { try { state.recog.onend = null; state.recog.stop(); } catch {} }
-  if (state.micRecorder && state.micRecorder.state !== "inactive") {
-    try { state.micRecorder.stop(); } catch {}
+async function playTTS(src) {
+  ttsPlaying = true;
+  setStatus("speaking", "AI is speaking…");
+  ttsAudio.src = src;
+  try { await ttsAudio.play(); } catch { ttsPlaying = false; return; }
+  await new Promise((resolve)=> ttsAudio.onended = resolve);
+  ttsPlaying = false;
+}
+
+// ----- Ring → Greeting → Listen -----
+async function startSequence() {
+  abortSequence = false;
+  setStatus("connecting", "Connecting…");
+  startTimer();
+
+  // play ring twice
+  for (let i=0; i<2; i++) {
+    if (abortSequence) return; // stopped early
+    safeStopAudio(ttsAudio);
+    safeStopAudio(greetAudio);
+    await ringAudio.play().catch(()=>{});
+    await new Promise(r => ringAudio.onended = r);
+    await sleep(80);
   }
-  if (state.micStream) {
-    for (const t of state.micStream.getTracks()) try { t.stop(); } catch {}
+  if (abortSequence) return;
+
+  // greeting
+  setStatus("greeting", "AI is greeting you…");
+  await greetAudio.play().catch(()=>{});
+  await new Promise(r => greetAudio.onended = r);
+
+  if (abortSequence) return;
+  setStatus("listening", "Listening…");
+}
+
+// ----- Start/Stop -----
+async function startCall() {
+  if (micBtn.dataset.state === "off") micBtn.click(); // ensure mic on
+
+  await initAudio();
+  if (mediaRec && mediaRec.state !== "recording") {
+    try { mediaRec.start(); } catch {}
   }
-  try { state.ac?.close(); } catch {}
-  try { state.outAC?.close(); } catch {}
+
+  await startSequence(); // returns immediately if aborted
 }
 
-async function endCall(reason = "") {
-  if (!state.active) return;
-  state.active = false;
-  ui.btnEnd?.classList.remove("armed");
-  setStatus("Call ended");
-  setListening("—");
-  stopClock();
-  hardStopMedia();
+async function endCall() {
+  // allow ending anytime
+  abortSequence = true;
 
-  // Small delay to let UI show “Call ended”
-  setTimeout(navigateHome, 350);
-}
+  setStatus("ended", "Call ended");
+  stopTimer();
 
-function navigateHome() {
+  // stop audios
+  [ringAudio, greetAudio, ttsAudio].forEach(safeStopAudio);
+
+  // stop STT
+  if (sttActive && stt) { try { stt.stop(); } catch {} }
+  sttActive = false;
+
+  // stop VAD + input
+  if (vadNode) try { vadNode.disconnect(); } catch {}
+  vadOn = false;
+
+  if (ac) {
+    try { ac.close(); } catch {}
+    ac = null;
+  }
+  if (inputStream) {
+    try { inputStream.getTracks().forEach(t=>t.stop()); } catch {}
+    inputStream = null;
+  }
+
+  // finalize recorder
+  if (mediaRec && mediaRec.state !== "inactive") {
+    try { mediaRec.stop(); } catch {}
+  }
+
+  // end in DB
+  try {
+    const cid = await ensureCallRow();
+    await supabase.from("calls").update({ ended_at: nowTs() }).eq("id", cid);
+  } catch {}
+
+  // short delay for UI, then home
+  await sleep(250);
   location.href = "./home.html";
 }
 
-/* -------------------------
-   Start
--------------------------- */
-boot().catch(console.error);
+// ----- Buttons -----
+backBtn.onclick = () => location.href = "./home.html";
+
+micBtn.onclick = () => {
+  const off = micBtn.dataset.state === "off";
+  micBtn.dataset.state = off ? "on" : "off";
+  micBtn.title = off ? "Mic on" : "Mic off";
+  // we keep the stream open for VAD; if you'd like real mute, stop tracks instead:
+  // inputStream?.getAudioTracks().forEach(t => t.enabled = off);
+};
+
+spkBtn.onclick = () => {
+  const off = spkBtn.dataset.state === "off";
+  spkBtn.dataset.state = off ? "on" : "off";
+  const enabled = off;
+  [ringAudio, greetAudio, ttsAudio].forEach(a => a.muted = !enabled);
+};
+
+hangBtn.onclick = () => {
+  // Always works—even during ring/greeting
+  endCall();
+};
+
+moreBtn.onclick = () => {
+  alert("Coming soon: CC view • Save audio • Device picker");
+};
+
+// start immediately
+startCall();

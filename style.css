@@ -1,0 +1,389 @@
+/* =========================================================
+   Son of Wisdom — Global Styles
+   ========================================================= */
+
+/* -------- Reset / Base -------- */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  background: var(--bg0) fixed;
+  color: var(--text);
+}
+
+/* -------- Theme Tokens -------- */
+:root{
+  --bg0: radial-gradient(120% 100% at 50% 10%, #0b1623, #0b1118 48%, #0a0f16);
+  --panel: rgba(255,255,255,0.055);
+  --panel-2: rgba(255,255,255,0.035);
+  --border: rgba(255,255,255,0.12);
+  --muted: #a9bfdc;
+  --muted-2: #8ea7c5;
+  --text: #e9f0ff;
+  --link: #8ab4ff;
+  --primary: #2563eb;
+  --primary-2:#1e50c9;
+  --danger: #ef4444;
+  --ok: #26d07c;
+  --gold: #f4b671;
+  --shadow-1: 0 8px 30px rgba(0,0,0,.35);
+  --shadow-2: 0 18px 60px rgba(0,0,0,.45);
+}
+
+/* -------- General Elements -------- */
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1,h2,h3 { margin: 0 0 .5rem 0; font-weight: 800; color: var(--text); }
+p { margin: 0 0 .75rem 0; color: var(--muted); }
+
+small, .caption { color: var(--muted-2); }
+
+/* Hide favicon 404 jank in DevTools network */
+link[rel="icon"] { display: none; }
+
+/* =========================================================
+   Components
+   ========================================================= */
+
+/* ---- Card ---- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-1);
+  border-radius: 16px;
+}
+
+/* ---- Inputs ---- */
+.input {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--panel-2);
+  outline: none;
+}
+.input::placeholder { color: var(--muted-2); }
+.input:focus {
+  border-color: rgba(138, 180, 255, .5);
+  box-shadow: 0 0 0 3px rgba(138, 180, 255, .18);
+}
+
+/* ---- Chips ---- */
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+.chip:hover { background: rgba(255,255,255,.08); }
+
+/* ---- Buttons ---- */
+.btn {
+  display: inline-grid;
+  place-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 14px;
+  border-radius: 12px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,.06);
+  cursor: pointer;
+  user-select: none;
+  transition: transform .06s ease-in-out, background .15s, box-shadow .15s;
+}
+.btn:active { transform: translateY(0) scale(.98); }
+.btn:hover { background: rgba(255,255,255,.10); }
+
+.btn.icon { width: 42px; padding: 0; }
+
+.btn.primary {
+  background: linear-gradient(180deg, var(--primary), var(--primary-2));
+  border-color: rgba(0,0,0,.35);
+  box-shadow: 0 12px 26px rgba(37,99,235,.25);
+}
+.btn.primary:hover { filter: brightness(1.05); }
+
+.btn.red {
+  background: var(--danger);
+  border-color: rgba(0,0,0,.35);
+  color: #fff;
+  box-shadow: 0 12px 30px rgba(239,68,68,.28);
+}
+.btn.red:hover { filter: brightness(1.02); }
+
+/* ---- Pills (status) ---- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
+  font-weight: 600;
+}
+.pill .dot {
+  width: 8px; height: 8px; border-radius: 999px;
+  background: var(--ok);
+  box-shadow: 0 0 10px #26d07c88;
+}
+
+/* ---- Toolbar link (top-left back / logout) ---- */
+.toolbar-link {
+  position: fixed;
+  left: 10px;
+  top: 10px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  color: var(--text);
+  z-index: 20;
+}
+
+/* =========================================================
+   Auth (login/signup)
+   ========================================================= */
+.auth-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(16px, 3vw, 40px);
+}
+.auth-card {
+  width: min(520px, 92vw);
+  padding: clamp(18px, 2.5vw, 26px);
+}
+.auth-head { margin-bottom: 14px; }
+.auth-form { display: grid; gap: 12px; }
+.auth-row { display: grid; gap: 6px; }
+.auth-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 8px;
+}
+.auth-foot {
+  margin-top: 14px;
+  text-align: center;
+  color: var(--muted);
+}
+.powered { margin-top: 10px; text-align: center; color: var(--muted-2); font-size: 12px; }
+
+/* =========================================================
+   Home (post-login landing)
+   ========================================================= */
+.home-wrap {
+  min-height: 100dvh;
+  display: grid;
+  /* keep the card near the bottom like screenshot */
+  align-items: end;
+  justify-items: center;
+  padding: 24px 16px 36px;
+}
+.home-card {
+  width: min(820px, 96vw);
+  padding: 18px 16px;
+  border-radius: 16px;
+}
+.home-title {
+  text-align: center;
+  font-size: clamp(18px, 2.6vw, 28px);
+  margin-bottom: 10px;
+}
+
+/* input row */
+.ask-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ask-row .input { height: 48px; }
+
+/* CTA row */
+.cta-row {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0,1fr));
+  gap: 10px;
+}
+@media (max-width: 600px){
+  .cta-row { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+/* chips – first row */
+.home-chips { margin: 8px 0 6px; }
+
+/* past conversations link */
+.home-foot {
+  margin-top: 10px;
+  text-align: center;
+}
+
+/* Logout (top-right) */
+#logoutBtn {
+  position: fixed;
+  right: 12px;
+  top: 10px;
+  z-index: 20;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+}
+
+/* =========================================================
+   Call Page (Tony Robbins style)
+   ========================================================= */
+.call-app {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(12px, 2vw, 28px);
+}
+
+.call-stage {
+  width: min(880px, 94vw);
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+  gap: 14px;
+  justify-items: center;
+}
+
+/* Back link on call page */
+#btnBack { composes: toolbar-link; } /* (safe if not supported: just same rules) */
+#btnBack {
+  position: fixed; left: 10px; top: 10px;
+  padding: 6px 10px; border-radius: 10px;
+  background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+  color: var(--text); z-index: 20;
+}
+
+/* Center ring & avatar */
+#ring {
+  --ring-scale: 1;
+  width: clamp(160px, 24vw, 220px);
+  aspect-ratio: 1;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  transform: scale(var(--ring-scale));
+  transition: transform 60ms linear;
+}
+#ring::before {
+  content: "";
+  position: absolute;
+  inset: -18%;
+  border-radius: 999px;
+  background: radial-gradient(65% 65% at 50% 50%, rgba(255, 179, 89, 0.28), transparent 70%);
+  filter: blur(2px);
+}
+#ring .avatar {
+  width: 86%;
+  aspect-ratio: 1;
+  border-radius: 999px;
+  background: #0e141c url("./Sonofwisdom.png") center/contain no-repeat;
+  border: 6px solid rgba(255,255,255,0.08);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.35), inset 0 0 0 4px rgba(0,0,0,0.25);
+}
+
+/* Status + clock under ring */
+#status { color: var(--muted); font-weight: 600; margin-top: 8px; }
+#clock { color: var(--gold); font-weight: 800; padding: 6px 10px; }
+
+/* Listening pill */
+.listen-pill { margin-top: 6px; }
+.listen-pill .pill { background: rgba(255,255,255,.06); }
+
+/* Listening bar */
+.listen-wrap {
+  width: min(820px, 96vw);
+}
+#listenBar {
+  width: 100%;
+  padding: 12px 16px;
+  text-align: center;
+  background: var(--panel);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* Controls row */
+.controls {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0,1fr));
+  gap: clamp(12px, 2.2vw, 16px);
+  align-items: center;
+  width: min(720px, 95vw);
+}
+
+.btn.round {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  padding: 0;
+}
+
+/* Big red end button (always clickable) */
+.btn.red {
+  min-width: clamp(180px, 28vw, 240px);
+  height: 54px;
+  border-radius: 14px;
+  font-weight: 800;
+  letter-spacing: .02em;
+}
+.btn.red.armed { pointer-events: auto; }
+.btn.red:not(.armed) { pointer-events: auto; } /* keep end-call responsive */
+
+/* Toggle indicators */
+#btnMic[data-muted="true"] {
+  background: rgba(239,68,68,.18);
+  border-color: rgba(239,68,68,.35);
+}
+#btnSpk[data-on="false"] {
+  filter: grayscale(.6);
+  opacity: .7;
+}
+
+/* =========================================================
+   Utilities
+   ========================================================= */
+.center { display: grid; place-items: center; }
+.grid { display: grid; gap: 10px; }
+.row { display: flex; gap: 10px; align-items: center; }
+
+.hidden { display: none !important; }
+.muted { color: var(--muted) !important; }
+
+/* spacing helpers */
+.mt-1{ margin-top: 6px; } .mt-2{ margin-top: 10px; } .mt-3{ margin-top: 14px; }
+.mb-1{ margin-bottom: 6px; } .mb-2{ margin-bottom: 10px; } .mb-3{ margin-bottom: 14px; }
+
+/* Responsive tweaks */
+@media (max-width: 520px){
+  .auth-card { padding: 16px; }
+  .cta-row { gap: 8px; }
+  .controls { grid-template-columns: 1fr 1fr 1fr 1fr; }
+}

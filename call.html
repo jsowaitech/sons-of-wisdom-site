@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Call • Son of Wisdom</title>
+  <link rel="stylesheet" href="/style.css" />
+  <style>
+    /* Minimal call-specific polish (safe if your main CSS already has these) */
+    #app.call-app{
+      min-height:100dvh;
+      display:flex;
+      flex-direction:column;
+      align-items:center;
+      justify-content:center;
+      gap:22px;
+      padding:20px 16px 28px;
+    }
+    .avatar-wrap{
+      position:relative;
+      width:180px;height:180px;
+      border-radius:50%;
+      display:grid;place-items:center;
+      background: radial-gradient(120px 120px at 50% 50%, rgba(213,161,106,.25), transparent 60%);
+      box-shadow: 0 0 80px rgba(213,161,106,.25);
+    }
+    .avatar-wrap img{
+      width:140px;height:140px;border-radius:50%;
+      object-fit:cover;background:#0f1722; border:3px solid rgba(255,255,255,.12);
+    }
+    .voice-ring{
+      position:absolute;inset:-6px;
+      border-radius:50%;
+      border:2px solid rgba(213,161,106,.7);
+      box-shadow:0 0 16px rgba(213,161,106,.45) inset, 0 0 18px rgba(213,161,106,.25);
+      animation: ringPulse 2.2s ease-in-out infinite;
+    }
+    @keyframes ringPulse{
+      0%{ transform: scale(1); opacity:.9 }
+      50%{ transform: scale(1.05); opacity:.6 }
+      100%{ transform: scale(1); opacity:.9 }
+    }
+    .status{ color:#e9eef6; opacity:.9; text-align:center; min-height:1.5em }
+    .timer-badge{
+      background:#d5a16a;color:#0e1418;font-weight:700;
+      border-radius:10px;padding:6px 10px;display:inline-block;
+      box-shadow:0 6px 18px rgba(212,163,115,.35);
+    }
+    .bar{
+      width:min(900px, 92vw);height:40px;
+      border-radius:12px;border:1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.05);
+      display:flex;align-items:center; padding:0 12px; color:#a9b2c1;
+      overflow:hidden;
+    }
+    .log{ width:min(900px, 92vw); max-width:92vw; }
+    .bubble{
+      border:1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.06);
+      color:#e9eef6; padding:10px 12px; border-radius:12px; margin:8px 0;
+    }
+    .controls{
+      display:flex; gap:16px; margin-top:18px;
+    }
+    .round{
+      width:64px;height:64px;border-radius:999px;
+      display:grid;place-items:center;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.07);
+      color:#e9eef6;
+      box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    }
+    .round--danger{ background:#e05252;border-color:#e05252 }
+    .round svg{ width:28px;height:28px }
+  </style>
+</head>
+<body>
+  <main id="app" class="call-app">
+    <div class="avatar-wrap" aria-live="polite">
+      <span class="voice-ring" id="ring"></span>
+      <img src="/Sonofwisdom.png" alt="Son of Wisdom" />
+    </div>
+
+    <div class="status">
+      <div id="status-line">Tap the blue call button to begin.</div>
+      <div style="margin-top:6px">
+        <span id="timer" class="timer-badge">00:00</span>
+      </div>
+    </div>
+
+    <div class="bar" id="tran-bar">Listening bar…</div>
+
+    <div class="log" id="live-log" aria-label="Live transcript"></div>
+
+    <div class="controls">
+      <button id="mic-btn" class="round" title="Toggle microphone" aria-pressed="false">
+        <!-- mic -->
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3zm5-3a5 5 0 01-10 0H5a7 7 0 0014 0h-2zM11 19v3h2v-3h-2z"/></svg>
+      </button>
+
+      <button id="call-btn" class="round round--danger" title="Start / End call">
+        <!-- phone -->
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.62 10.79a15.46 15.46 0 006.59 6.59l2.2-2.2a1 1 0 011.01-.24c1.12.37 2.33.57 3.58.57a1 1 0 011 1v3.25a1 1 0 01-1 1C12.4 21.77 2.23 11.6 2.23 3a1 1 0 011-1H6.5a1 1 0 011 1c0 1.25.2 2.46.57 3.58a1 1 0 01-.25 1.01l-2.2 2.2z"/></svg>
+      </button>
+
+      <button id="spk-btn" class="round" title="Toggle speaker">
+        <!-- speaker -->
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm13 2a3 3 0 00-1-2.24v4.47A3 3 0 0016 12zm-1-7.73v2.06a7 7 0 010 11.34v2.06a9 9 0 000-15.46z"/></svg>
+      </button>
+
+      <button id="more-btn" class="round" title="More">
+        <!-- dots -->
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+    </div>
+  </main>
+
+  <script type="module" src="/app/call.js"></script>
+</body>
+</html>

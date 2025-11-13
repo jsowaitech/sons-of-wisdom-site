@@ -1,45 +1,118 @@
-// app/history.js
-import { requireSession, listCalls, listTurns } from "./supabase.js";
+// history.js
+import { supa, ensureAuthedOrRedirect } from './supabase.js';
 
-await requireSession();
+const $ = (s, r = document) => r.querySelector(s);
+const list = $('#list');
 
-const listEl = document.getElementById("history-list");
-const metaEl = document.getElementById("history-meta");
+const params = new URLSearchParams(location.search);
+const returnTo = params.get('returnTo') || 'home.html';
 
-function formatDuration(sec) {
-  const s = Math.max(0, sec | 0);
-  const mm = String(Math.floor(s / 60)).padStart(2, "0");
-  const ss = String(s % 60).padStart(2, "0");
-  return `${mm}:${ss}`;
+function initialFromEmail(email = '') {
+  const c = (email || '?').trim()[0] || '?';
+  return c.toUpperCase();
 }
 
-function rowHTML(call) {
-  const t = call.title || "Untitled";
-  const dt = new Date(call.created_at);
-  const when = dt.toLocaleString();
-  const dur = call.duration_sec ? formatDuration(call.duration_sec) : "—";
-  return `
-    <button class="history-row" data-id="${call.id}">
-      <div class="title">${t}</div>
-      <div class="sub">Started: ${when} • Duration: ${dur}</div>
-    </button>`;
+function convUrl(id) {
+  const q = new URLSearchParams({ c: id }).toString();
+  return `./home.html?${q}`;
 }
 
-async function render() {
-  listEl.innerHTML = "Loading…";
+async function getConvosFromSupabase(userId) {
   try {
-    const calls = await listCalls();
-    metaEl.textContent = `${calls.length} conversations`;
-    listEl.innerHTML = calls.map(rowHTML).join("") || "<div class='muted'>No conversations yet.</div>";
+    const { data, error } = await supa
+      .from('conversations')
+      .select('id,title,updated_at')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false });
+    if (error) throw error;
+    return data.map(r => ({
+      id: r.id,
+      title: r.title || 'Untitled',
+      updated_at: r.updated_at || new Date().toISOString()
+    }));
   } catch (e) {
-    listEl.innerHTML = `<div class="error">Failed to load history: ${e.message}</div>`;
+    // table missing etc. fall back to localStorage
+    return null;
   }
 }
-listEl.addEventListener("click", (e) => {
-  const btn = e.target.closest(".history-row");
-  if (!btn) return;
-  const id = btn.getAttribute("data-id");
-  if (id) location.href = `./call.html?resume=${encodeURIComponent(id)}`;
+
+function getConvosFromLocal() {
+  const raw = localStorage.getItem('convos') || '[]';
+  try { return JSON.parse(raw); } catch { return []; }
+}
+
+function saveConvosToLocal(convos) {
+  localStorage.setItem('convos', JSON.stringify(convos));
+}
+
+function renderConvos(convos) {
+  list.innerHTML = '';
+  if (!convos || convos.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'conv-item';
+    empty.textContent = 'No conversations yet. Tap “New Conversation” to start.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const c of convos) {
+    const el = document.createElement('div');
+    el.className = 'conv-item';
+    el.innerHTML = `
+      <div class="title">${c.title || 'Untitled'}</div>
+      <div class="date">${new Date(c.updated_at || Date.now()).toLocaleDateString(undefined,{month:'long',day:'numeric'})}</div>
+    `;
+    el.addEventListener('click', () => (window.location.href = convUrl(c.id)));
+    list.appendChild(el);
+  }
+}
+
+async function createConversation(userId, email) {
+  const title = 'New Conversation';
+  // Try Supabase first
+  try {
+    const { data, error } = await supa
+      .from('conversations')
+      .insert([{ user_id: userId, title }])
+      .select('id')
+      .single();
+    if (error) throw error;
+    return data.id;
+  } catch {
+    // Fallback to localStorage
+    const convos = getConvosFromLocal();
+    const id = crypto.randomUUID();
+    convos.unshift({ id, title, updated_at: new Date().toISOString() });
+    saveConvosToLocal(convos);
+    return id;
+  }
+}
+
+$('#btn-close').addEventListener('click', () => {
+  // return to where we came from (defaults to home.html)
+  const dest = decodeURIComponent(returnTo);
+  window.location.href = dest.match(/\.html/) ? dest : 'home.html';
 });
 
-render();
+$('#btn-settings').addEventListener('click', () => {
+  alert('Settings coming soon.');
+});
+
+$('#btn-new').addEventListener('click', async () => {
+  const { data: { user } } = await supa.auth.getUser();
+  const id = await createConversation(user?.id, user?.email);
+  window.location.href = convUrl(id);
+});
+
+(async function boot() {
+  await ensureAuthedOrRedirect();
+  const { data: { user } } = await supa.auth.getUser();
+
+  // Render bottom user row
+  $('#user-name').textContent = user?.user_metadata?.full_name || user?.email || 'You';
+  $('#avatar').textContent = initialFromEmail(user?.email);
+
+  // Load conversations
+  let convos = await getConvosFromSupabase(user?.id);
+  if (!convos) convos = getConvosFromLocal();
+  renderConvos(convos);
+})();

@@ -1,99 +1,177 @@
 // app/home.js
-// Home screen: chips, prompt box + Call / Files / Speak / Send, and a Logout button.
+// Home (chat) page controller — desktop & mobile friendly
 
-import { CONFIG } from "./config.js";
+// Clear one-shot redirect flag so future logins work again
+sessionStorage.removeItem("sow_redirected");
 
-// Try to import signOut from supabase.js, but don't break if it's not there.
-let signOut = null;
-try {
-  ({ signOut } = await import("./supabase.js"));
-} catch (_) {
-  // optional
+import { supabase, ensureAuthedOrRedirect, getSession } from "./supabase.js";
+
+/* -------------------------- tiny DOM helpers -------------------------- */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+/* ------------------------------ state -------------------------------- */
+const CHAT_URL = "/api/chat";          // your backend (n8n/Express/etc.)
+const chatId   = (crypto?.randomUUID?.() || String(Date.now())); // session/thread id
+let session    = null;
+let sending    = false;
+
+/* ------------------------------ UI refs ------------------------------- */
+const refs = {
+  chipsRow:   $(".simple-chips"),
+  chips:      $$(".chip"),
+  status:     $("#status"),
+  input:      $("#q"),
+  sendBtn:    $("#btn-send"),
+  callBtn:    $("#btn-call"),
+  filesBtn:   $("#btn-files"),
+  speakBtn:   $("#btn-speak"),
+  chatBox:    $("#chat-box"),          // optional (add if you want bubbles)
+  logoutBtn:  $("#btn-logout"),
+  hamburger:  $("#btn-menu"),
+};
+
+/* ---------------------------- utilities ------------------------------- */
+function setStatus(msg, isError = false) {
+  if (!refs.status) return;
+  refs.status.textContent = msg || "";
+  refs.status.style.color = isError ? "#ffb3b3" : "var(--muted)";
 }
 
-// ---------- Top bar (Logout) ----------
-(function injectHomeTopbar() {
-  const bar = document.createElement("div");
-  bar.className = "topbar";
-  bar.innerHTML = `
-    <div class="topbar__left">
-      <span class="powered tiny muted">powered by Son of Wisdom</span>
-    </div>
-    <div class="topbar__right">
-      <button id="logout-btn" class="link-btn" aria-label="Sign out">Logout</button>
-    </div>
-  `;
-  document.body.prepend(bar);
+function setSendingState(v) {
+  sending = !!v;
+  if (refs.sendBtn) {
+    refs.sendBtn.disabled = sending;
+    refs.sendBtn.textContent = sending ? "Sending…" : "Send";
+  }
+  if (refs.input) refs.input.disabled = sending;
+}
 
-  const btn = bar.querySelector("#logout-btn");
-  btn.addEventListener("click", async () => {
-    try { if (typeof signOut === "function") await signOut(); } catch (e) { console.error(e); }
-    location.href = "/auth.html";
+/* optional: render bubbles if #chat-box exists */
+function appendBubble(role, text) {
+  if (!refs.chatBox) return; // no chat stream on page; silently skip
+  const el = document.createElement("div");
+  el.className = `bubble ${role}`;
+  el.textContent = text;
+  refs.chatBox.appendChild(el);
+  refs.chatBox.parentElement?.scrollTo({ top: refs.chatBox.parentElement.scrollHeight, behavior: "smooth" });
+}
+
+/* ---------------------------- networking ------------------------------ */
+async function chatRequest(text, meta = {}) {
+  const body = {
+    text,
+    meta,
+  };
+  const res = await fetch(CHAT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
-})();
-
-// ---------- Layout ----------
-const app = document.getElementById("app");
-app.classList.add("home-wrap");
-
-app.innerHTML = `
-  <section class="home-card">
-    <h2 class="home-title">What do you want to explore today?</h2>
-    <div class="chip-row">
-      <button class="chip" data-text="Boosting energy and vitality tips">Boosting energy and vitality tips</button>
-      <button class="chip" data-text="I feel stuck about my business">I feel stuck about my business</button>
-      <button class="chip" data-text="Help me prepare for a tough conversation">Help me prepare for a tough conversation</button>
-    </div>
-
-    <div class="prompt-row">
-      <input id="prompt" class="input" type="text" placeholder="Ask Son of Wisdom AI..." autocomplete="off" />
-    </div>
-
-    <div class="action-row">
-      <button id="call-btn" class="btn btn-primary btn-icon">
-        <span class="i i-call"></span><span>Call</span>
-      </button>
-      <button id="files-btn" class="btn btn-soft btn-icon">
-        <span class="i i-file"></span><span>Files</span>
-      </button>
-      <button id="speak-btn" class="btn btn-soft btn-icon">
-        <span class="i i-mic"></span><span>Speak</span>
-      </button>
-      <button id="send-btn" class="btn btn-soft btn-icon btn-grow">
-        <span class="i i-send"></span><span>Send</span>
-      </button>
-    </div>
-
-    <p class="tip muted">Tip: tap a chip or type your own and choose Call or Send.</p>
-
-    <p class="history-link"><a href="/history.html">See past conversations</a></p>
-  </section>
-`;
-
-// ---------- Behavior ----------
-const promptEl = document.getElementById("prompt");
-const setPrompt = (text) => (promptEl.value = text);
-
-app.querySelectorAll(".chip").forEach((c) =>
-  c.addEventListener("click", () => setPrompt(c.dataset.text || c.textContent.trim()))
-);
-
-function goCall() {
-  const q = promptEl.value.trim();
-  const qs = q ? `?prompt=${encodeURIComponent(q)}` : "";
-  location.href = `/call.html${qs}`;
+  if (!res.ok) {
+    const t = await res.text().catch(() => "");
+    throw new Error(`Chat ${res.status}: ${t || res.statusText}`);
+  }
+  // Expect JSON: { reply: "..." } or { message: "..." }
+  const data = await res.json().catch(() => ({}));
+  return data.reply ?? data.message ?? "";
 }
 
-app.querySelector("#call-btn").addEventListener("click", goCall);
-app.querySelector("#send-btn").addEventListener("click", () => {
-  // placeholder for text chat – for now go to call with the prompt
-  goCall();
-});
-app.querySelector("#speak-btn").addEventListener("click", goCall);
-app.querySelector("#files-btn").addEventListener("click", () => {
-  alert("File upload coming soon.");
-});
+/* ------------------------------ actions ------------------------------- */
+async function handleSend() {
+  if (!refs.input) return;
+  const text = refs.input.value.trim();
+  if (!text || sending) return;
 
-promptEl.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") goCall();
-});
+  appendBubble("user", text);
+  setSendingState(true);
+  setStatus("Thinking…");
+
+  try {
+    const email = session?.user?.email ?? null;
+    const reply = await chatRequest(text, {
+      email,
+      page: "home",
+      sessionId: chatId,
+      timestamp: new Date().toISOString(),
+    });
+    appendBubble("ai", reply || "…");
+    setStatus("Ready.");
+  } catch (err) {
+    console.error("[HOME] chat error:", err);
+    appendBubble("ai", "Sorry — something went wrong while replying.");
+    setStatus("Request failed. Please try again.", true);
+  } finally {
+    setSendingState(false);
+    refs.input.value = "";
+    refs.input.focus();
+  }
+}
+
+function bindUI() {
+  // chips -> fill input
+  refs.chips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const fill = chip.getAttribute("data-fill") || chip.textContent || "";
+      if (refs.input) {
+        refs.input.value = fill;
+        refs.input.focus();
+      }
+    });
+  });
+
+  // send button
+  refs.sendBtn?.addEventListener("click", handleSend);
+
+  // Enter to send (Shift+Enter for newline if you switch to textarea later)
+  refs.input?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  });
+
+  // tools (stubs / routes)
+  refs.callBtn?.addEventListener("click", () => {
+    window.location.href = "call.html";
+  });
+  refs.filesBtn?.addEventListener("click", async () => {
+    // lightweight stub; replace with your flow
+    alert("Files: connect your upload flow here.");
+  });
+  refs.speakBtn?.addEventListener("click", () => {
+    alert("Speak: wire your mic/voice flow here.");
+  });
+
+  // history nav (hamburger)
+  refs.hamburger?.addEventListener("click", () => {
+    window.location.href = "history.html";
+  });
+
+  // logout
+  refs.logoutBtn?.addEventListener("click", async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.warn("signOut error:", e);
+    } finally {
+      window.location.replace("/auth.html");
+    }
+  });
+}
+
+/* -------------------------------- boot -------------------------------- */
+(async function boot() {
+  // Protect the page (redirect to auth when not signed in)
+  await ensureAuthedOrRedirect();
+
+  // If we’re still here, we’re either signed in or in the short window before redirect.
+  session = await getSession();
+  bindUI();
+
+  if (session?.user) {
+    setStatus("Signed in. How can I help?");
+  } else {
+    setStatus("Checking sign-in…");
+  }
+})();

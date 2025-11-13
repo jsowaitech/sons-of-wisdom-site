@@ -1,37 +1,47 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
-    <title>Conversations • Son of Wisdom</title>
-    <link rel="stylesheet" href="./style.css" />
-  </head>
-  <body>
-    <main id="app" class="history-app">
-      <p class="powered-by">powered by Son of Wisdom</p>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Conversations — Son of Wisdom</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body class="bg">
+  <header class="topbar">
+    <!-- Close → back to Home -->
+    <button id="btn-close" class="btn icon" aria-label="Close">
+      ✕
+    </button>
+  </header>
 
-      <header class="history-header">
-        <button id="backBtn" class="ghost" aria-label="Back">← Home</button>
-        <h1 class="h-heading">Conversations</h1>
-        <button id="newBtn" class="cta small">+ New</button>
-      </header>
+  <main class="history-wrap">
+    <div class="hist-header">
+      <button id="btn-new" class="btn big accent">＋ New Conversation</button>
+    </div>
 
-      <section id="threads" class="thread-list" aria-live="polite">
-        <!-- rows injected -->
-      </section>
+    <div class="hist-title">CONVERSATIONS</div>
+    <div id="list" class="conv-list"></div>
+  </main>
 
-      <footer class="history-footer">
-        <div id="meRow" class="me-row">
-          <div class="me-dot">B</div>
-          <div class="me-name">Blake Templeton</div>
-          <button id="settingsBtn" class="icon-gear" aria-label="Settings"></button>
-        </div>
-      </footer>
-    </main>
+  <footer class="hist-bottom">
+    <div class="user-row">
+      <div class="user-id">
+        <div id="avatar" class="avatar">?</div>
+        <div id="user-name" class="user-name">…</div>
+      </div>
+      <button id="btn-settings" class="settings-btn" title="Settings" aria-label="Settings">
+        <!-- simple gear -->
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+          <path d="M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z" stroke="#e8edf5" stroke-width="1.6"/>
+          <path d="M19.4 15.5 21 14l-1.6-1.5.3-2.1L22 9l-1-2-2 .4-1.5-1.5L16 3l-2.1.3L12.5 2 11 3.6 9 3.2 8 5.2l-2 .4.4 2-1.6 1.5L5.6 12l-1.6 1.5L5 15l-.4 2 2 .4 1 2 2-.4 1.5 1.6 1.4-1.6L16 19l1-2 2-.4-.4-2Z" stroke="#e8edf5" stroke-width="1" opacity=".5"/>
+        </svg>
+      </button>
+    </div>
+  </footer>
 
-    <script type="module" src="./app/history.js"></script>
-  </body>
+<link rel="icon" href="data:,"><!-- stops favicon 404 -->
+<script type="module" src="./app/supabase.js"></script>
+<script type="module" src="./app/history.js"></script>
+
+</body>
 </html>
